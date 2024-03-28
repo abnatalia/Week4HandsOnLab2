@@ -1,1 +1,194 @@
 # Week4HandsOnLab2
+
+library("tidymodels")
+library("tidyverse")
+library("stringr")
+install.packages("data.table")
+library(data.table)
+
+# Dataset URL
+dataset_url <- "https://cf-courses-data.s3.us.cloud-object-storage.appdomain.cloud/IBMDeveloperSkillsNetwork-RP0321EN-SkillsNetwork/labs/datasets/seoul_bike_sharing_converted_normalized.csv"
+bike_sharing_df <- read_csv(dataset_url)
+spec(bike_sharing_df)
+
+bike_sharing_df <- bike_sharing_df %>% 
+  select(-DATE, -FUNCTIONING_DAY)
+
+setnames(bike_sharing_df, old=c("0","1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", 
+                                "20", "21", "22", "23"), new=c("ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", 
+                                                               "TEN", "ELEVEN", "TWELVE", "THIRTEEN", "FOURTEEN", "FIFTEEN", "SIXTEEN", "SEVENTEEN",
+                                                               "EIGHTEEN", "NINETEEN", "TWENTY", "TWENTY-ONE", "TWENTY-TWO", "TWENTY-THREE"))
+lm_spec <- linear_reg() %>%
+  set_engine("lm") %>% 
+  set_mode("regression")
+
+set.seed(1234)
+data_split <- initial_split(bike_sharing_df, prop = 4/5)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+
+#TASK: Add polynomial terms
+# Plot the higher order polynomial fits
+ggplot(data=train_data, aes(RENTED_BIKE_COUNT, TEMPERATURE)) + 
+  geom_point() + 
+  geom_smooth(method = "lm", formula = y ~ x, color="red") + 
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2), color="yellow") + 
+  geom_smooth(method = "lm", formula = y ~ poly(x, 4), color="green") + 
+  geom_smooth(method = "lm", formula = y ~ poly(x, 6), color="blue")
+
+# Fit a linear model with higher order polynomial on some important variables 
+# #HINT: Use ploy function to build polynomial terms, lm_poly <- RENTED_BIKE_COUNT ~ poly(TEMPERATURE, 6) + poly(HUMIDITY, 4) .....
+lm_poly <- lm_spec %>% 
+  fit(RENTED_BIKE_COUNT ~ poly(HUMIDITY, 4) + poly(TEMPERATURE, 6), data = train_data)
+lm_poly
+
+# Print model summary
+summary(lm_poly$fit)
+
+# Use predict() function to generate test results for `lm_poly`
+test_results <- predict(lm_poly, new_data = test_data, interval = "confidence") 
+test_results
+
+test_results[test_results<0] <- 0
+
+test_results <- lm_poly %>%
+  predict(new_data = test_data) %>% 
+  mutate(truth = test_data$RENTED_BIKE_COUNT) 
+rmse(test_results, truth = truth, estimate = .pred)
+rsq(test_results, truth = truth, estimate = .pred)
+
+#TASK: Add interaction terms
+lm_poly2 <- lm_spec %>% 
+  fit(RENTED_BIKE_COUNT ~ poly(HUMIDITY, 4) + poly(TEMPERATURE, 6) + HUMIDITY*RAINFALL , data = train_data)
+lm_poly2
+
+summary(lm_poly2$fit)
+
+test_results <- lm_poly2 %>%
+  predict(new_data = test_data) %>% 
+  mutate(truth = test_data$RENTED_BIKE_COUNT) 
+rmse(test_results, truth = truth, estimate = .pred)
+rsq(test_results, truth = truth, estimate = .pred)
+
+#TASK: Add regularization
+glmnet_spec <- linear_reg(penalty = 0.1, mixture = 0.3) %>%
+  set_engine("glmnet") %>%
+  set_mode("regression")
+
+reg_recipe <- glmnet_spec %>% fit(RENTED_BIKE_COUNT ~ poly(HUMIDITY, 4) + poly(TEMPERATURE, 6), data = train_data)
+test_result_lasso <- reg_recipe %>%
+  predict(new_data = test_data) %>% 
+  mutate(truth = test_data$RENTED_BIKE_COUNT) 
+rmse(test_result_lasso, truth = truth, estimate = .pred)
+rsq(test_result_lasso, truth = truth, estimate = .pred)
+
+install.packages('glmnet')
+library('glmnet')
+
+#TASK: Experiment to search for improved models
+#Polynomial - Weather factors
+lm_try1 <- lm_spec %>% 
+  fit(RENTED_BIKE_COUNT ~ poly(TEMPERATURE, 6) + poly(HUMIDITY, 4) + poly(WIND_SPEED, 1) + poly(VISIBILITY, 1) + 
+      poly(DEW_POINT_TEMPERATURE, 4) + poly(SOLAR_RADIATION, 4) + poly(RAINFALL, 1) + poly(SNOWFALL, 1), data = train_data)
+
+summary(lm_try1$fit)
+
+test_results <- lm_try1 %>%
+  predict(new_data = test_data) %>% 
+  mutate(truth = test_data$RENTED_BIKE_COUNT) 
+rmse_try1 <- rmse(test_results, truth = truth, estimate = .pred) #415 (Goal: Less than 330)
+rsq_try1 <- rsq(test_results, truth = truth, estimate = .pred) #0.57 (Goal: Larger 0.72)
+
+
+#Interaction terms - Weather factors
+lm_try2 <- lm_spec %>% 
+  fit(RENTED_BIKE_COUNT ~ poly(TEMPERATURE, 6) + poly(HUMIDITY, 4) + HUMIDITY*RAINFALL + 
+        poly(SOLAR_RADIATION, 4) + SOLAR_RADIATION*VISIBILITY, data = train_data)
+
+test_results <- lm_try2 %>%
+  predict(new_data = test_data) %>% 
+  mutate(truth = test_data$RENTED_BIKE_COUNT) 
+rmse_try2 <- rmse(test_results, truth = truth, estimate = .pred) #446
+rsq_try2 <- rsq(test_results, truth = truth, estimate = .pred) #0.505
+
+# Polynomials - All factors
+lm_try3 <-  lm_spec %>%
+  fit(RENTED_BIKE_COUNT ~ poly(TEMPERATURE, 6) + poly(HUMIDITY, 4) + WIND_SPEED + VISIBILITY + poly(DEW_POINT_TEMPERATURE, 4) + poly(SOLAR_RADIATION, 4) + RAINFALL + SNOWFALL +
+        HOLIDAY + AUTUMN + SPRING + SUMMER + WINTER + NO_HOLIDAY + ONE + TWO + THREE + FOUR + FIVE + SIX + SEVEN + EIGHT + NINE + TEN + 
+        ELEVEN + TWELVE + THIRTEEN + FOURTEEN + FIFTEEN + SIXTEEN + SEVENTEEN + EIGHTEEN + NINETEEN + TWENTY + TWENTY-ONE + TWENTY-TWO + 
+        TWENTY-THREE, data = train_data)
+
+summary(lm_try3$fit)
+
+test_results <- lm_try3 %>%
+  predict(new_data = test_data) %>% 
+  mutate(truth = test_data$RENTED_BIKE_COUNT) 
+rmse_try3 <- rmse(test_results, truth = truth, estimate = .pred) #342 (Goal: Less than 330)
+rsq_try3 <- rsq(test_results, truth = truth, estimate = .pred) #0.707 (Goal: Larger 0.72)
+
+# Interaction term - All factors
+lm_try4 <-  lm_spec %>%
+  fit(RENTED_BIKE_COUNT ~ poly(TEMPERATURE, 6) + poly(HUMIDITY, 4) + WIND_SPEED + VISIBILITY + poly(DEW_POINT_TEMPERATURE, 4) + poly(SOLAR_RADIATION, 4) + 
+        RAINFALL + SNOWFALL + HUMIDITY*RAINFALL + TEMPERATURE*SUMMER + TEMPERATURE*SPRING + TEMPERATURE*AUTUMN + TEMPERATURE*WINTER +
+        HOLIDAY + AUTUMN + SPRING + SUMMER + WINTER + NO_HOLIDAY + ONE + TWO + THREE + FOUR + FIVE + SIX + SEVEN + EIGHT + NINE + TEN + 
+        ELEVEN + TWELVE + THIRTEEN + FOURTEEN + FIFTEEN + SIXTEEN + SEVENTEEN + EIGHTEEN + NINETEEN + TWENTY + TWENTY-ONE + TWENTY-TWO + 
+        TWENTY-THREE, data = train_data)
+summary(lm_try4$fit)
+
+test_results <- lm_try4 %>%
+  predict(new_data = test_data) %>% 
+  mutate(truth = test_data$RENTED_BIKE_COUNT) 
+rmse_try4 <- rmse(test_results, truth = truth, estimate = .pred) #340 (Goal: Less than 330)
+rsq_try4 <- rsq(test_results, truth = truth, estimate = .pred) #0.711 (Goal: Larger 0.72)
+
+#Regularization, interaction terms and polynomials with all factors
+glmnet_spec <- linear_reg(penalty = 0.1, mixture = 0.3) %>%
+  set_engine("glmnet") %>%
+  set_mode("regression")
+
+reg_recipe2 <- glmnet_spec %>% fit(RENTED_BIKE_COUNT ~ poly(TEMPERATURE, 6) + poly(HUMIDITY, 4) + poly(WIND_SPEED, 4) + VISIBILITY + 
+                                     poly(DEW_POINT_TEMPERATURE, 4) + poly(SOLAR_RADIATION, 4) + RAINFALL + SNOWFALL + HUMIDITY*RAINFALL + 
+                                     HUMIDITY*SNOWFALL + VISIBILITY*SUMMER + VISIBILITY*SPRING + VISIBILITY*AUTUMN + VISIBILITY*WINTER + 
+                                     TEMPERATURE*SUMMER + TEMPERATURE*SPRING + TEMPERATURE*AUTUMN + TEMPERATURE*WINTER + 
+                                     SOLAR_RADIATION*DEW_POINT_TEMPERATURE +  TEMPERATURE*HUMIDITY + TEMPERATURE*WIND_SPEED + 
+                                     HOLIDAY*SEVEN + HOLIDAY*EIGHT + HOLIDAY*NINE + HOLIDAY*TEN + 
+                                     TEMPERATURE*VISIBILITY + TEMPERATURE*SOLAR_RADIATION + HOLIDAY + AUTUMN + SPRING + SUMMER + 
+                                     WINTER + NO_HOLIDAY + ONE + TWO + THREE + FOUR + FIVE + SIX + SEVEN + EIGHT + NINE + TEN + ELEVEN + 
+                                     TWELVE + THIRTEEN + FOURTEEN + FIFTEEN + SIXTEEN + SEVENTEEN + EIGHTEEN + NINETEEN + TWENTY + 
+                                     TWENTY-ONE + TWENTY-TWO + TWENTY-THREE, data = train_data)
+test_result_lasso <- reg_recipe2 %>%
+  predict(new_data = test_data) %>% 
+  mutate(truth = test_data$RENTED_BIKE_COUNT) 
+rmse_try5 <- rmse(test_result_lasso, truth = truth, estimate = .pred) #330 (Goal: Less than 330)
+rsq_try5 <- rsq(test_result_lasso, truth = truth, estimate = .pred) #0.728 (Goal: Larger 0.72)
+
+
+#Grouped bar chart
+#model <-c("Weather factors", "Weather factors with interaction terms", "All factors", "All factors with interaction terms", "All factors with interaction terms and regularization")
+model <-c("1", "2", "3", "4", "5")
+rmse <- c(rmse_try1$.estimate, rmse_try2$.estimate, rmse_try3$.estimate, rmse_try4$.estimate, rmse_try5$.estimate)
+rsq <- c(rsq_try1$.estimate, rsq_try2$.estimate, rsq_try3$.estimate, rsq_try4$.estimate, rsq_try5$.estimate)
+
+model_evaluation <- data.frame(model, rmse, rsq)
+
+ggplot(model_evaluation, aes(x = model, y = rmse, fill = model)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(x='Model', y='RMSE', title='RMSE of Regression Models')
+
+ggplot(model_evaluation, aes(x = model, y = rsq, fill = model)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(x='Model', y='RMSE', title='R-Squared of Regression Models')
+
+#Q-Q Plot
+test_results <- predict(reg_recipe2, new_data = test_data, interval = "confidence") 
+train_results <- predict(reg_recipe2, new_data = train_data, interval = "confidence") 
+
+results <- c(train_results, test_results)
+test_results_df <- data.frame(results)
+setnames(test_results_df, old=c(".pred", ".pred.1"), new=c("prediction", "truth"))
+
+ggplot(data = test_results_df) +
+  stat_qq(aes(sample = "truth"), color = 'green') +
+  stat_qq(aes(sample = "prediction"), color = 'red')
